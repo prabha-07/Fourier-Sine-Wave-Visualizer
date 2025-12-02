@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fourier Sine Wave Visualizer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <header class="hero">
+  <!-- Acknowledgement -->
+  <div style="position: absolute; top: 1.5rem; right: 1.5rem; color: rgba(148, 163, 184, 0.8); font-size: 1.1rem; font-family: 'Space Grotesk', sans-serif; z-index: 10;">
+    An experiment by Prabhakaran
+  </div>
+  <div class="hero__content">
+    <h1 style="font-size: clamp(3rem, 8vw, 5.5rem); margin: 0 0 0.5rem; font-weight: 700; letter-spacing: -0.02em; background: linear-gradient(135deg, #38bdf8 0%, #a855f7 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
+      Fourier's Utopia
+    </h1>
+    <p class="eyebrow" style="margin-top: 0;">Interactive DSP Toolkit</p>
+    <h2 style="font-size: clamp(1.5rem, 4vw, 2.2rem); margin: 0 0 1rem; font-weight: 500; line-height: 1.3;">
+      Upload audio, decompose it into sine waves, and watch the spectrum come alive.
+    </h2>
+    <p class="lede">
+      This browser-based visualizer performs a Fourier Transform on your audio file using Python (Flask + librosa + scipy), then animates the individual
+      sine wave components in sync with playback.
+    </p>
+    <div class="hero__badges">
+      <span>Python Backend</span>
+      <span>Web Audio API</span>
+      <span>Flask Powered</span>
+    </div>
+  </div>
+</header>
+
+  <main class="app">
+    <section class="panel panel--upload">
+      <div class="panel__header">
+        <h2>1. Upload audio</h2>
+        <p>Select any MP3/WAV file under 25&nbsp;MB to analyze.</p>
+      </div>
+      <div class="dropzone" id="dropzone-container">
+        <input id="file-input" type="file" accept="audio/*" style="position: absolute; opacity: 0; width: 100%; height: 100%; top: 0; left: 0; cursor: pointer; z-index: 10;" />
+        <div class="dropzone__icon">⬆︎</div>
+        <p class="dropzone__label">Click to choose a file or drag it here</p>
+        <p class="dropzone__hint">The analysis runs on the Python server.</p>
+      </div>
+      <div class="stats" id="file-stats">
+        <div>
+          <span>File</span>
+          <strong id="stat-file">–</strong>
+        </div>
+        <div>
+          <span>Duration</span>
+          <strong id="stat-duration">–</strong>
+        </div>
+        <div>
+          <span>Sample rate</span>
+          <strong id="stat-sample-rate">–</strong>
+        </div>
+        <div>
+          <span>FFT size</span>
+          <strong id="stat-fft">–</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel panel--controls">
+      <div class="panel__header">
+        <h2>2. Playback &amp; controls</h2>
+        <p>Play the track to sync the visualizer. Pause or stop anytime.</p>
+      </div>
+      <div class="controls">
+        <button id="btn-play" disabled>Play</button>
+        <button id="btn-pause" disabled>Pause</button>
+        <button id="btn-stop" disabled>Stop</button>
+        <button id="btn-reset" disabled class="ghost">Reset Visualizer</button>
+      </div>
+      <div class="progress">
+        <div class="progress__bar" id="progress-bar"></div>
+      </div>
+      <p class="status" id="status">Waiting for audio...</p>
+    </section>
+
+    <section class="panel panel--visualizer">
+      <div class="panel__header">
+        <h2>3. Sine wave visualizer</h2>
+        <p>Every line below represents an individual sine component extracted from the Fourier Transform (computed by Python).</p>
+      </div>
+      <canvas id="visualizer" width="1200" height="600" role="img" aria-label="Sine wave visualization of uploaded audio frequencies">
+        Your browser does not support canvas.
+      </canvas>
+      <div class="panel__footer">
+        <p><strong>Tip:</strong> Larger magnitudes = brighter, taller waves. Frequencies are sorted from bass (top) to treble (bottom).</p>
+      </div>
+    </section>
+
+    <section class="panel panel--frequencies">
+      <div class="panel__header">
+        <h2>Dominant frequency components</h2>
+        <p>The top peaks across the spectrum. Magnitude is normalized between 0–1.</p>
+      </div>
+      <div class="frequency-table" id="frequency-table">
+        <div class="frequency-table__header">
+          <span>#</span>
+          <span>Frequency (Hz)</span>
+          <span>Normalized amplitude</span>
+        </div>
+        <div id="frequency-rows" class="frequency-table__rows">
+          <p class="empty">Upload an audio file to populate this table.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel panel--deploy">
+      <div class="panel__header">
+        <h2>How it works</h2>
+        <p>This app uses Flask (Python) backend for audio processing:</p>
+      </div>
+      <ol class="deploy-steps">
+        <li>Upload audio file → Sent to Flask server</li>
+        <li>Python processes with librosa + scipy.fft → Returns FFT data</li>
+        <li>JavaScript visualizes the data → Real-time sine wave animation</li>
+        <li>Web Audio API plays the track → Synchronized with visualizer</li>
+      </ol>
+    </section>
+  </main>
+
+  <script src="./scripts/app.js"></script>
+</body>
+
+</html>
