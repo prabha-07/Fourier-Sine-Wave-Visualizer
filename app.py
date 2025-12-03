@@ -22,23 +22,43 @@ FFT_SAMPLE_LIMIT = 262144
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def convert_mp3_to_wav(mp3_path, wav_path, target_sr=8000, max_duration=2.0):
+def check_mp3_backend():
+    """Check what MP3 backends are available for librosa"""
+    try:
+        import audioread
+        backends = []
+        # Check available backends
+        if hasattr(audioread, 'available_backends'):
+            backends = audioread.available_backends()
+        print(f"Available MP3 backends: {backends}")
+        return backends
+    except Exception as e:
+        print(f"Error checking backends: {e}")
+        return []
+
+def convert_mp3_to_wav(mp3_path, wav_path, target_sr=8000, max_duration=10.0):
     """
     Convert MP3 file to WAV format for faster processing.
-    Uses most aggressive settings to minimize conversion time.
-    Note: MP3 decoding is inherently slow - consider converting to WAV client-side for best performance.
+    Checks for available backends and provides helpful error messages.
     """
     print(f"Converting MP3 to WAV: {mp3_path} -> {wav_path}")
+    
+    # Check available backends
+    backends = check_mp3_backend()
+    if not backends:
+        raise Exception("No MP3 decoding backends available. MP3 support requires ffmpeg or other system libraries. Please convert your MP3 to WAV format first.")
+    
     start_time = time.time()
     
     try:
-        # Load MP3 directly at target sample rate (faster than loading native then resampling)
-        # Use most aggressive settings: very low SR, very short duration, fastest resampling
-        print(f"Loading MP3 at {target_sr}Hz, max {max_duration}s (aggressive settings for speed)...")
+        # Load MP3 - librosa will use available backend
+        print(f"Loading MP3 at {target_sr}Hz, max {max_duration}s...")
+        print(f"Using backends: {backends}")
+        
         y, sr = librosa.load(
             mp3_path,
-            sr=target_sr,  # Load directly at target SR (faster than resampling after)
-            duration=max_duration,  # Very short duration (2 seconds) to stay under timeout
+            sr=target_sr,  # Load directly at target SR
+            duration=max_duration,
             mono=True,
             res_type='kaiser_fast'  # Fastest resampling
         )
@@ -47,8 +67,8 @@ def convert_mp3_to_wav(mp3_path, wav_path, target_sr=8000, max_duration=2.0):
         print(f"MP3 loaded in {load_time:.2f} seconds, {len(y)} samples")
         
         # Safety check - if loading took too long, abort early
-        if load_time > 15:
-            raise Exception(f"MP3 loading took too long ({load_time:.2f}s). MP3 files are slow to process on this server. Please convert to WAV format first for faster processing.")
+        if load_time > 25:
+            raise Exception(f"MP3 loading took too long ({load_time:.2f}s). This may indicate missing or slow MP3 decoding libraries. Please convert to WAV format first for faster processing.")
         
         # Save as WAV using soundfile (very fast)
         print("Saving as WAV...")
@@ -63,10 +83,16 @@ def convert_mp3_to_wav(mp3_path, wav_path, target_sr=8000, max_duration=2.0):
         return True, len(y), sr
         
     except Exception as e:
-        print(f"Error converting MP3 to WAV: {str(e)}")
+        error_msg = str(e)
+        print(f"Error converting MP3 to WAV: {error_msg}")
         import traceback
         traceback.print_exc()
-        return False, None, None
+        
+        # Provide helpful error message
+        if "No backends available" in error_msg or "backend" in error_msg.lower():
+            raise Exception("MP3 decoding requires system libraries (ffmpeg/libav) that are not installed. Please convert your MP3 to WAV format first using an online converter or audio software.")
+        else:
+            raise Exception(f"Failed to process MP3: {error_msg}. Please try converting to WAV format first.")
 
 @app.route('/')
 def index():
@@ -119,7 +145,7 @@ def analyze_audio():
         
         # Use very low sample rate for fastest processing (8000 Hz covers up to 4kHz)
         TARGET_SR = 8000
-        MAX_DURATION = 2.0  # Limit to 2 seconds for MP3 (very aggressive for timeout prevention)
+        MAX_DURATION = 10.0  # Can process longer files now that we check for backends
         
         original_temp_path = temp_path
         
@@ -134,10 +160,10 @@ def analyze_audio():
             conversion_time = time.time() - conversion_start
             
             if not success:
-                raise Exception("Failed to convert MP3 to WAV. MP3 files are slow to process on this server. Please convert your MP3 to WAV format first using an online converter or audio software (like Audacity, VLC, or ffmpeg). WAV files process much faster!")
+                raise Exception("Failed to convert MP3 to WAV. This usually means MP3 decoding libraries (ffmpeg) are not installed on the server. Please convert your MP3 to WAV format first using an online converter or audio software (like Audacity, VLC, or ffmpeg). WAV files work immediately without additional dependencies!")
             
-            if conversion_time > 20:
-                raise Exception(f"MP3 conversion took too long ({conversion_time:.2f}s). MP3 decoding is slow on this server. For best results, please convert your MP3 to WAV format first. You can use online converters or tools like Audacity/VLC.")
+            if conversion_time > 25:
+                raise Exception(f"MP3 conversion took too long ({conversion_time:.2f}s). This may indicate missing or slow MP3 decoding libraries. For best results, please convert your MP3 to WAV format first. You can use online converters or tools like Audacity/VLC.")
             
             # Use the WAV file for processing
             temp_path = wav_path
