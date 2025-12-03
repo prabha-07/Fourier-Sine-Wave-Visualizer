@@ -22,40 +22,42 @@ FFT_SAMPLE_LIMIT = 262144
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def convert_mp3_to_wav(mp3_path, wav_path, target_sr=8000, max_duration=5.0):
+def convert_mp3_to_wav(mp3_path, wav_path, target_sr=8000, max_duration=2.0):
     """
     Convert MP3 file to WAV format for faster processing.
-    This function handles the slow MP3 decoding once, then saves as WAV
-    for fast subsequent processing.
+    Uses most aggressive settings to minimize conversion time.
+    Note: MP3 decoding is inherently slow - consider converting to WAV client-side for best performance.
     """
     print(f"Converting MP3 to WAV: {mp3_path} -> {wav_path}")
     start_time = time.time()
     
     try:
-        # Load MP3 with librosa (slow but necessary for MP3)
-        # Load at native rate first (faster), then resample
-        y_native, sr_native = librosa.load(
+        # Load MP3 directly at target sample rate (faster than loading native then resampling)
+        # Use most aggressive settings: very low SR, very short duration, fastest resampling
+        print(f"Loading MP3 at {target_sr}Hz, max {max_duration}s (aggressive settings for speed)...")
+        y, sr = librosa.load(
             mp3_path,
-            sr=None,  # Keep native sample rate (faster decoding)
-            duration=max_duration,
-            mono=True
+            sr=target_sr,  # Load directly at target SR (faster than resampling after)
+            duration=max_duration,  # Very short duration (2 seconds) to stay under timeout
+            mono=True,
+            res_type='kaiser_fast'  # Fastest resampling
         )
         
-        # Resample to target sample rate if needed
-        if sr_native != target_sr:
-            import scipy.signal
-            num_samples = int(len(y_native) * target_sr / sr_native)
-            y = scipy.signal.resample(y_native, num_samples)
-            sr = target_sr
-        else:
-            y = y_native
-            sr = sr_native
+        load_time = time.time() - start_time
+        print(f"MP3 loaded in {load_time:.2f} seconds, {len(y)} samples")
         
-        # Save as WAV using soundfile (fast)
+        # Safety check - if loading took too long, abort early
+        if load_time > 15:
+            raise Exception(f"MP3 loading took too long ({load_time:.2f}s). MP3 files are slow to process on this server. Please convert to WAV format first for faster processing.")
+        
+        # Save as WAV using soundfile (very fast)
+        print("Saving as WAV...")
+        save_start = time.time()
         sf.write(wav_path, y, sr, format='WAV', subtype='PCM_16')
+        save_time = time.time() - save_start
         
         convert_time = time.time() - start_time
-        print(f"MP3 to WAV conversion completed in {convert_time:.2f} seconds")
+        print(f"MP3 to WAV conversion completed in {convert_time:.2f} seconds (load: {load_time:.2f}s, save: {save_time:.2f}s)")
         print(f"Converted audio: {len(y)} samples at {sr} Hz ({len(y)/sr:.2f} seconds)")
         
         return True, len(y), sr
@@ -117,18 +119,25 @@ def analyze_audio():
         
         # Use very low sample rate for fastest processing (8000 Hz covers up to 4kHz)
         TARGET_SR = 8000
-        MAX_DURATION = 5.0  # Limit to 5 seconds
+        MAX_DURATION = 2.0  # Limit to 2 seconds for MP3 (very aggressive for timeout prevention)
         
         original_temp_path = temp_path
         
-        # If MP3, convert to WAV first
+        # If MP3, convert to WAV first (with timeout protection)
         if file_ext == '.mp3':
             print("MP3 file detected - converting to WAV for faster processing...")
             wav_path = temp_path.replace('.mp3', '.wav').replace('.MP3', '.wav')
+            
+            # Add timeout protection for MP3 conversion
+            conversion_start = time.time()
             success, num_samples, sr = convert_mp3_to_wav(temp_path, wav_path, TARGET_SR, MAX_DURATION)
+            conversion_time = time.time() - conversion_start
             
             if not success:
-                raise Exception("Failed to convert MP3 to WAV. Please try a WAV file or check the audio file.")
+                raise Exception("Failed to convert MP3 to WAV. MP3 files are slow to process on this server. Please convert your MP3 to WAV format first using an online converter or audio software (like Audacity, VLC, or ffmpeg). WAV files process much faster!")
+            
+            if conversion_time > 20:
+                raise Exception(f"MP3 conversion took too long ({conversion_time:.2f}s). MP3 decoding is slow on this server. For best results, please convert your MP3 to WAV format first. You can use online converters or tools like Audacity/VLC.")
             
             # Use the WAV file for processing
             temp_path = wav_path
@@ -155,7 +164,7 @@ def analyze_audio():
             
             y = data
             
-            # Limit to 5 seconds (safety check)
+            # Limit duration (safety check)
             max_samples = int(TARGET_SR * MAX_DURATION)
             if len(y) > max_samples:
                 y = y[:max_samples]
