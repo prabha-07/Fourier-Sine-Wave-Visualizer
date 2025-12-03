@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import librosa
+import soundfile as sf
 import numpy as np
 from scipy.fft import fft, fftfreq
 import tempfile
@@ -64,33 +65,78 @@ def analyze_audio():
             file.save(tmp.name)
             temp_path = tmp.name
         
-        # Load audio using librosa with maximum optimization for speed
+        # Load audio with optimized method based on file type
         print(f"Loading audio: {temp_path}")
+        file_ext = os.path.splitext(file.filename)[1].lower()
         
         # Use very low sample rate for fastest processing (8000 Hz covers up to 4kHz)
-        # This is sufficient for FFT visualization and dramatically faster
         TARGET_SR = 8000
         
-        # Limit to first 5 seconds for very long files - critical for timeout prevention
-        # This ensures processing completes well under 30 seconds
-        print("Starting librosa.load()...")
+        print("Starting audio load...")
         start_time = time.time()
         
-        # Load with maximum speed optimizations
-        y, sr = librosa.load(
-            temp_path, 
-            sr=TARGET_SR,  # Very low sample rate = much faster processing
-            duration=5.0,  # Limit to first 5 seconds (aggressive limit for timeout)
-            mono=True,  # Ensure mono
-            res_type='kaiser_fast'  # Fastest resampling method
-        )
+        # Try soundfile first for WAV/FLAC (much faster than librosa)
+        if file_ext in ['.wav', '.flac']:
+            try:
+                print("Using soundfile for fast loading...")
+                data, sr = sf.read(temp_path, dtype='float32')
+                # Convert to mono if stereo
+                if len(data.shape) > 1:
+                    data = np.mean(data, axis=1)
+                # Resample if needed
+                if sr != TARGET_SR:
+                    import scipy.signal
+                    num_samples = int(len(data) * TARGET_SR / sr)
+                    data = scipy.signal.resample(data, num_samples)
+                    sr = TARGET_SR
+                y = data
+                # Limit to 5 seconds
+                max_samples = int(TARGET_SR * 5)
+                if len(y) > max_samples:
+                    y = y[:max_samples]
+            except Exception as e:
+                print(f"soundfile failed, falling back to librosa: {e}")
+                # Fallback to librosa
+                y, sr = librosa.load(temp_path, sr=TARGET_SR, duration=5.0, mono=True, res_type='kaiser_fast')
+        else:
+            # For MP3 and other formats, use librosa with most aggressive settings
+            print("Using librosa for MP3/other formats...")
+            # Try loading at native rate first (faster), then resample
+            # This avoids librosa's slow resampling during load
+            try:
+                # Load first 5 seconds at native rate (faster)
+                y_native, sr_native = librosa.load(
+                    temp_path,
+                    sr=None,  # Keep native sample rate (faster decoding)
+                    duration=5.0,
+                    mono=True
+                )
+                # Manual resample to target rate (faster than librosa's resampling)
+                if sr_native != TARGET_SR:
+                    import scipy.signal
+                    num_samples = int(len(y_native) * TARGET_SR / sr_native)
+                    y = scipy.signal.resample(y_native, num_samples)
+                    sr = TARGET_SR
+                else:
+                    y = y_native
+                    sr = sr_native
+            except Exception as e:
+                print(f"Native rate load failed, using direct resample: {e}")
+                # Fallback: direct resample during load
+                y, sr = librosa.load(
+                    temp_path, 
+                    sr=TARGET_SR,
+                    duration=5.0,
+                    mono=True,
+                    res_type='kaiser_fast'
+                )
         
         load_time = time.time() - start_time
-        print(f"librosa.load() completed in {load_time:.2f} seconds")
+        print(f"Audio load completed in {load_time:.2f} seconds")
         
         # Safety check: if loading took too long, we're in trouble
-        if load_time > 20:
-            raise Exception(f"Audio loading took too long ({load_time:.2f}s). File may be too complex.")
+        if load_time > 25:
+            raise Exception(f"Audio loading took too long ({load_time:.2f}s). Please try a WAV file or shorter audio.")
         
         N = len(y)
         print(f"Audio loaded: {N} samples at {sr} Hz ({N/sr:.2f} seconds)")
@@ -171,7 +217,13 @@ def analyze_audio():
         print(f"Error processing audio: {str(e)}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': f'Error processing audio: {str(e)}'}), 500
+        
+        # Provide helpful error message for timeout issues
+        error_msg = str(e)
+        if 'timeout' in error_msg.lower() or 'too long' in error_msg.lower():
+            error_msg = f"Processing took too long. MP3 files can be slow to process. Try converting to WAV format for faster processing, or use a shorter audio file (under 5 seconds)."
+        
+        return jsonify({'error': f'Error processing audio: {error_msg}'}), 500
     
     finally:
         # Clean up temp file
