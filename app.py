@@ -8,6 +8,7 @@ import tempfile
 import os
 import signal
 import time
+import subprocess
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -22,77 +23,69 @@ FFT_SAMPLE_LIMIT = 262144
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def check_mp3_backend():
-    """Check what MP3 backends are available for librosa"""
-    try:
-        import audioread
-        backends = []
-        # Check available backends
-        if hasattr(audioread, 'available_backends'):
-            backends = audioread.available_backends()
-        print(f"Available MP3 backends: {backends}")
-        return backends
-    except Exception as e:
-        print(f"Error checking backends: {e}")
-        return []
-
-def convert_mp3_to_wav(mp3_path, wav_path, target_sr=8000, max_duration=10.0):
+def decode_mp3_ffmpeg(mp3_path, wav_path, target_sr=8000, max_duration=10.0):
     """
-    Convert MP3 file to WAV format for faster processing.
-    Checks for available backends and provides helpful error messages.
+    Decode MP3 to WAV using ffmpeg directly (much more memory-efficient than librosa).
+    This avoids heavy in-RAM MP3 decode and is faster.
     """
-    print(f"Converting MP3 to WAV: {mp3_path} -> {wav_path}")
-    
-    # Check available backends
-    backends = check_mp3_backend()
-    if not backends:
-        raise Exception("No MP3 decoding backends available. MP3 support requires ffmpeg or other system libraries. Please convert your MP3 to WAV format first.")
-    
+    print(f"Decoding MP3 to WAV using ffmpeg: {mp3_path} -> {wav_path}")
     start_time = time.time()
     
     try:
-        # Load MP3 - librosa will use available backend
-        print(f"Loading MP3 at {target_sr}Hz, max {max_duration}s...")
-        print(f"Using backends: {backends}")
+        # Check if ffmpeg is available
+        try:
+            subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=5)
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            raise Exception("ffmpeg is not installed or not available. MP3 support requires ffmpeg. Please convert your MP3 to WAV format first.")
         
-        y, sr = librosa.load(
-            mp3_path,
-            sr=target_sr,  # Load directly at target SR
-            duration=max_duration,
-            mono=True,
-            res_type='kaiser_fast'  # Fastest resampling
+        # Use ffmpeg to decode MP3 directly to WAV with desired settings
+        cmd = [
+            "ffmpeg", "-y",  # -y to overwrite output file
+            "-i", mp3_path,  # input file
+            "-ac", "1",      # mono (1 audio channel)
+            "-ar", str(target_sr),  # sample rate
+            "-t", str(max_duration),  # max duration in seconds
+            "-f", "wav",     # output format
+            wav_path         # output file
+        ]
+        
+        print(f"Running ffmpeg command: {' '.join(cmd)}")
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+            timeout=30  # 30 second timeout for ffmpeg
         )
         
-        load_time = time.time() - start_time
-        print(f"MP3 loaded in {load_time:.2f} seconds, {len(y)} samples")
+        decode_time = time.time() - start_time
+        print(f"ffmpeg decode completed in {decode_time:.2f} seconds")
         
-        # Safety check - if loading took too long, abort early
-        if load_time > 25:
-            raise Exception(f"MP3 loading took too long ({load_time:.2f}s). This may indicate missing or slow MP3 decoding libraries. Please convert to WAV format first for faster processing.")
+        # Verify the output file was created and get info
+        if not os.path.exists(wav_path):
+            raise Exception("ffmpeg completed but output WAV file was not created")
         
-        # Save as WAV using soundfile (very fast)
-        print("Saving as WAV...")
-        save_start = time.time()
-        sf.write(wav_path, y, sr, format='WAV', subtype='PCM_16')
-        save_time = time.time() - save_start
+        # Get file info using soundfile (fast)
+        info = sf.info(wav_path)
+        num_samples = info.frames
+        sr = info.samplerate
         
-        convert_time = time.time() - start_time
-        print(f"MP3 to WAV conversion completed in {convert_time:.2f} seconds (load: {load_time:.2f}s, save: {save_time:.2f}s)")
-        print(f"Converted audio: {len(y)} samples at {sr} Hz ({len(y)/sr:.2f} seconds)")
+        print(f"Decoded audio: {num_samples} samples at {sr} Hz ({num_samples/sr:.2f} seconds)")
         
-        return True, len(y), sr
+        return True, num_samples, sr
         
+    except subprocess.TimeoutExpired:
+        raise Exception("MP3 decoding timed out. The file may be too large or complex. Please try a shorter file or convert to WAV format first.")
+    except subprocess.CalledProcessError as e:
+        error_output = e.stderr.decode('utf-8', errors='ignore') if e.stderr else str(e)
+        print(f"ffmpeg error: {error_output}")
+        raise Exception(f"Failed to decode MP3 with ffmpeg: {error_output}. Please check the file format or convert to WAV first.")
     except Exception as e:
         error_msg = str(e)
-        print(f"Error converting MP3 to WAV: {error_msg}")
+        print(f"Error decoding MP3 with ffmpeg: {error_msg}")
         import traceback
         traceback.print_exc()
-        
-        # Provide helpful error message
-        if "No backends available" in error_msg or "backend" in error_msg.lower():
-            raise Exception("MP3 decoding requires system libraries (ffmpeg/libav) that are not installed. Please convert your MP3 to WAV format first using an online converter or audio software.")
-        else:
-            raise Exception(f"Failed to process MP3: {error_msg}. Please try converting to WAV format first.")
+        raise Exception(f"Failed to process MP3: {error_msg}. Please try converting to WAV format first.")
 
 @app.route('/')
 def index():
@@ -149,25 +142,25 @@ def analyze_audio():
         
         original_temp_path = temp_path
         
-        # If MP3, convert to WAV first (with timeout protection)
+        # If MP3, decode to WAV using ffmpeg (much more efficient than librosa)
         if file_ext == '.mp3':
-            print("MP3 file detected - converting to WAV for faster processing...")
+            print("MP3 file detected - decoding to WAV using ffmpeg...")
             wav_path = temp_path.replace('.mp3', '.wav').replace('.MP3', '.wav')
             
-            # Add timeout protection for MP3 conversion
+            # Decode MP3 to WAV using ffmpeg (memory-efficient)
             conversion_start = time.time()
-            success, num_samples, sr = convert_mp3_to_wav(temp_path, wav_path, TARGET_SR, MAX_DURATION)
+            success, num_samples, sr = decode_mp3_ffmpeg(temp_path, wav_path, TARGET_SR, MAX_DURATION)
             conversion_time = time.time() - conversion_start
             
             if not success:
-                raise Exception("Failed to convert MP3 to WAV. This usually means MP3 decoding libraries (ffmpeg) are not installed on the server. Please convert your MP3 to WAV format first using an online converter or audio software (like Audacity, VLC, or ffmpeg). WAV files work immediately without additional dependencies!")
+                raise Exception("Failed to decode MP3 to WAV. ffmpeg may not be installed. Please convert your MP3 to WAV format first using an online converter or audio software (like Audacity, VLC, or ffmpeg). WAV files work immediately without additional dependencies!")
             
             if conversion_time > 25:
-                raise Exception(f"MP3 conversion took too long ({conversion_time:.2f}s). This may indicate missing or slow MP3 decoding libraries. For best results, please convert your MP3 to WAV format first. You can use online converters or tools like Audacity/VLC.")
+                raise Exception(f"MP3 decoding took too long ({conversion_time:.2f}s). Please try a shorter file or convert to WAV format first.")
             
             # Use the WAV file for processing
             temp_path = wav_path
-            print(f"Using converted WAV file: {wav_path}")
+            print(f"Using decoded WAV file: {wav_path}")
         
         # Now load audio using fast soundfile method (works for WAV, FLAC, and converted MP3)
         print("Loading audio with soundfile (fast method)...")
