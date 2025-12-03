@@ -12,7 +12,7 @@ CORS(app)  # Allow frontend to call API
 
 # Configuration
 ALLOWED_EXTENSIONS = {'mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'webm'}
-MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB (reduced for faster processing)
 MAX_COMPONENTS = 48
 FFT_SAMPLE_LIMIT = 262144
 
@@ -58,34 +58,37 @@ def analyze_audio():
             file.save(tmp.name)
             temp_path = tmp.name
         
-        # Load audio using librosa with optimized settings for faster processing
+        # Load audio using librosa with maximum optimization for speed
         print(f"Loading audio: {temp_path}")
         
-        # Use lower sample rate for faster processing (11025 Hz covers up to 5.5kHz)
-        # This is sufficient for FFT analysis and significantly faster
-        TARGET_SR = 11025
+        # Use very low sample rate for fastest processing (8000 Hz covers up to 4kHz)
+        # This is sufficient for FFT visualization and dramatically faster
+        TARGET_SR = 8000
         
-        # Limit to first 30 seconds for very long files to ensure fast processing
-        # Load audio with aggressive optimizations
+        # Limit to first 15 seconds for very long files - critical for timeout prevention
+        # Use fastest resampling method
+        print("Starting librosa.load()...")
         y, sr = librosa.load(
             temp_path, 
-            sr=TARGET_SR,  # Lower sample rate = faster processing
-            duration=30.0,  # Limit to first 30 seconds (reduced from 60)
-            mono=True,  # Ensure mono for consistent processing
-            offset=0.0  # Start from beginning
+            sr=TARGET_SR,  # Very low sample rate = much faster processing
+            duration=15.0,  # Limit to first 15 seconds (critical for timeout)
+            mono=True,  # Ensure mono
+            res_type='kaiser_fast'  # Fastest resampling method
         )
         
         N = len(y)
         print(f"Audio loaded: {N} samples at {sr} Hz ({N/sr:.2f} seconds)")
         
-        # Aggressively limit samples for FFT (use smaller limit)
-        FFT_LIMIT = 131072  # Reduced from 262144 for faster FFT
+        # Aggressively limit samples for FFT to ensure fast computation
+        FFT_LIMIT = 65536  # Even smaller limit (2^16) for fastest FFT
         if N > FFT_LIMIT:
             print(f"Downsampling from {N} to {FFT_LIMIT} samples")
             step = N // FFT_LIMIT
             y = y[::step]
             N = len(y)
             print(f"After downsampling: {N} samples")
+        
+        print("Starting FFT computation...")
         
         # Compute Fourier Transform (your existing code!)
         Y = fft(y)

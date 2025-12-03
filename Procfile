@@ -1,1 +1,1 @@
-web: gunicorn app:app -c gunicorn_config.py
+web: gunicorn --bind 0.0.0.0:$PORT --timeout 120 --workers 1 --worker-class sync --max-requests 1000 --max-requests-jitter 50 app:app
