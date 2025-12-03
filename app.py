@@ -16,14 +16,14 @@ CORS(app)  # Allow frontend to call API
 
 # Configuration
 ALLOWED_EXTENSIONS = {'mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'webm'}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB (reduced for faster processing)
+MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB (restored original limit)
 MAX_COMPONENTS = 48
 FFT_SAMPLE_LIMIT = 262144
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def decode_mp3_ffmpeg(mp3_path, wav_path, target_sr=8000, max_duration=10.0):
+def decode_mp3_ffmpeg(mp3_path, wav_path, target_sr=22050, max_duration=30.0):
     """
     Decode MP3 to WAV using ffmpeg directly (much more memory-efficient than librosa).
     This avoids heavy in-RAM MP3 decode and is faster.
@@ -117,9 +117,7 @@ def analyze_audio():
     if file_size > MAX_FILE_SIZE:
         return jsonify({'error': f'File too large. Max size: {MAX_FILE_SIZE / 1024 / 1024}MB'}), 400
     
-    # Reject very large files early (MP3 decoding is slow for large files)
-    if file_size > 5 * 1024 * 1024:  # 5MB
-        return jsonify({'error': 'File too large for processing. Please use a file under 5MB for faster processing.'}), 400
+    # Note: With ffmpeg, we can handle larger files efficiently
     
     # Save temporarily
     temp_path = None
@@ -136,9 +134,10 @@ def analyze_audio():
         print(f"Processing audio: {temp_path}")
         file_ext = os.path.splitext(file.filename)[1].lower()
         
-        # Use very low sample rate for fastest processing (8000 Hz covers up to 4kHz)
-        TARGET_SR = 8000
-        MAX_DURATION = 10.0  # Can process longer files now that we check for backends
+        # Use higher sample rate for better frequency resolution (22050 Hz covers up to 11kHz)
+        # This allows us to see frequencies up to 4000+ Hz range properly
+        TARGET_SR = 22050
+        MAX_DURATION = 30.0  # Process up to 30 seconds for better frequency analysis
         
         original_temp_path = temp_path
         
@@ -200,8 +199,8 @@ def analyze_audio():
         N = len(y)
         print(f"Audio loaded: {N} samples at {sr} Hz ({N/sr:.2f} seconds)")
         
-        # Aggressively limit samples for FFT to ensure fast computation
-        FFT_LIMIT = 32768  # Even smaller limit (2^15) for fastest FFT
+        # Limit samples for FFT if needed (original limit for good frequency resolution)
+        FFT_LIMIT = 262144  # Original limit (2^18) for good frequency resolution
         if N > FFT_LIMIT:
             print(f"Downsampling from {N} to {FFT_LIMIT} samples")
             step = N // FFT_LIMIT
