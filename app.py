@@ -58,31 +58,34 @@ def analyze_audio():
             file.save(tmp.name)
             temp_path = tmp.name
         
-        # Load audio using librosa with optimized settings
+        # Load audio using librosa with optimized settings for faster processing
         print(f"Loading audio: {temp_path}")
         
-        # Calculate target sample rate to limit data size
-        # For FFT analysis, 22050 Hz is sufficient (covers up to 11kHz)
-        TARGET_SR = 22050
+        # Use lower sample rate for faster processing (11025 Hz covers up to 5.5kHz)
+        # This is sufficient for FFT analysis and significantly faster
+        TARGET_SR = 11025
         
-        # Load audio with target sample rate and limit duration for very long files
-        # This reduces memory usage and processing time
+        # Limit to first 30 seconds for very long files to ensure fast processing
+        # Load audio with aggressive optimizations
         y, sr = librosa.load(
             temp_path, 
-            sr=TARGET_SR,  # Resample during load (faster than loading full quality)
-            duration=60.0,  # Limit to first 60 seconds for very long files
-            mono=True  # Ensure mono for consistent processing
+            sr=TARGET_SR,  # Lower sample rate = faster processing
+            duration=30.0,  # Limit to first 30 seconds (reduced from 60)
+            mono=True,  # Ensure mono for consistent processing
+            offset=0.0  # Start from beginning
         )
         
         N = len(y)
         print(f"Audio loaded: {N} samples at {sr} Hz ({N/sr:.2f} seconds)")
         
-        # Further limit samples if still too large (safety check)
-        if N > FFT_SAMPLE_LIMIT:
-            print(f"Downsampling from {N} to {FFT_SAMPLE_LIMIT} samples")
-            step = N // FFT_SAMPLE_LIMIT
+        # Aggressively limit samples for FFT (use smaller limit)
+        FFT_LIMIT = 131072  # Reduced from 262144 for faster FFT
+        if N > FFT_LIMIT:
+            print(f"Downsampling from {N} to {FFT_LIMIT} samples")
+            step = N // FFT_LIMIT
             y = y[::step]
             N = len(y)
+            print(f"After downsampling: {N} samples")
         
         # Compute Fourier Transform (your existing code!)
         Y = fft(y)

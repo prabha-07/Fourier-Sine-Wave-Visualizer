@@ -1,1 +1,1 @@
-web: gunicorn app:app --timeout 120 --workers 2 --threads 2 --worker-class sync --max-requests 1000 --max-requests-jitter 50
+web: gunicorn app:app -c gunicorn_config.py
