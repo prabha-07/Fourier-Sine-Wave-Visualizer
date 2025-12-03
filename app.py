@@ -22,6 +22,50 @@ FFT_SAMPLE_LIMIT = 262144
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def convert_mp3_to_wav(mp3_path, wav_path, target_sr=8000, max_duration=5.0):
+    """
+    Convert MP3 file to WAV format for faster processing.
+    This function handles the slow MP3 decoding once, then saves as WAV
+    for fast subsequent processing.
+    """
+    print(f"Converting MP3 to WAV: {mp3_path} -> {wav_path}")
+    start_time = time.time()
+    
+    try:
+        # Load MP3 with librosa (slow but necessary for MP3)
+        # Load at native rate first (faster), then resample
+        y_native, sr_native = librosa.load(
+            mp3_path,
+            sr=None,  # Keep native sample rate (faster decoding)
+            duration=max_duration,
+            mono=True
+        )
+        
+        # Resample to target sample rate if needed
+        if sr_native != target_sr:
+            import scipy.signal
+            num_samples = int(len(y_native) * target_sr / sr_native)
+            y = scipy.signal.resample(y_native, num_samples)
+            sr = target_sr
+        else:
+            y = y_native
+            sr = sr_native
+        
+        # Save as WAV using soundfile (fast)
+        sf.write(wav_path, y, sr, format='WAV', subtype='PCM_16')
+        
+        convert_time = time.time() - start_time
+        print(f"MP3 to WAV conversion completed in {convert_time:.2f} seconds")
+        print(f"Converted audio: {len(y)} samples at {sr} Hz ({len(y)/sr:.2f} seconds)")
+        
+        return True, len(y), sr
+        
+    except Exception as e:
+        print(f"Error converting MP3 to WAV: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False, None, None
+
 @app.route('/')
 def index():
     """Serve the main HTML page"""
@@ -58,6 +102,8 @@ def analyze_audio():
     
     # Save temporarily
     temp_path = None
+    original_temp_path = None
+    wav_path = None
     try:
         # Create temp file
         suffix = os.path.splitext(file.filename)[1]
@@ -65,78 +111,63 @@ def analyze_audio():
             file.save(tmp.name)
             temp_path = tmp.name
         
-        # Load audio with optimized method based on file type
-        print(f"Loading audio: {temp_path}")
+        # Convert MP3 to WAV first, then process WAV (much faster)
+        print(f"Processing audio: {temp_path}")
         file_ext = os.path.splitext(file.filename)[1].lower()
         
         # Use very low sample rate for fastest processing (8000 Hz covers up to 4kHz)
         TARGET_SR = 8000
+        MAX_DURATION = 5.0  # Limit to 5 seconds
         
-        print("Starting audio load...")
+        original_temp_path = temp_path
+        
+        # If MP3, convert to WAV first
+        if file_ext == '.mp3':
+            print("MP3 file detected - converting to WAV for faster processing...")
+            wav_path = temp_path.replace('.mp3', '.wav').replace('.MP3', '.wav')
+            success, num_samples, sr = convert_mp3_to_wav(temp_path, wav_path, TARGET_SR, MAX_DURATION)
+            
+            if not success:
+                raise Exception("Failed to convert MP3 to WAV. Please try a WAV file or check the audio file.")
+            
+            # Use the WAV file for processing
+            temp_path = wav_path
+            print(f"Using converted WAV file: {wav_path}")
+        
+        # Now load audio using fast soundfile method (works for WAV, FLAC, and converted MP3)
+        print("Loading audio with soundfile (fast method)...")
         start_time = time.time()
         
-        # Try soundfile first for WAV/FLAC (much faster than librosa)
-        if file_ext in ['.wav', '.flac']:
-            try:
-                print("Using soundfile for fast loading...")
-                data, sr = sf.read(temp_path, dtype='float32')
-                # Convert to mono if stereo
-                if len(data.shape) > 1:
-                    data = np.mean(data, axis=1)
-                # Resample if needed
-                if sr != TARGET_SR:
-                    import scipy.signal
-                    num_samples = int(len(data) * TARGET_SR / sr)
-                    data = scipy.signal.resample(data, num_samples)
-                    sr = TARGET_SR
-                y = data
-                # Limit to 5 seconds
-                max_samples = int(TARGET_SR * 5)
-                if len(y) > max_samples:
-                    y = y[:max_samples]
-            except Exception as e:
-                print(f"soundfile failed, falling back to librosa: {e}")
-                # Fallback to librosa
-                y, sr = librosa.load(temp_path, sr=TARGET_SR, duration=5.0, mono=True, res_type='kaiser_fast')
-        else:
-            # For MP3 and other formats, use librosa with most aggressive settings
-            print("Using librosa for MP3/other formats...")
-            # Try loading at native rate first (faster), then resample
-            # This avoids librosa's slow resampling during load
-            try:
-                # Load first 5 seconds at native rate (faster)
-                y_native, sr_native = librosa.load(
-                    temp_path,
-                    sr=None,  # Keep native sample rate (faster decoding)
-                    duration=5.0,
-                    mono=True
-                )
-                # Manual resample to target rate (faster than librosa's resampling)
-                if sr_native != TARGET_SR:
-                    import scipy.signal
-                    num_samples = int(len(y_native) * TARGET_SR / sr_native)
-                    y = scipy.signal.resample(y_native, num_samples)
-                    sr = TARGET_SR
-                else:
-                    y = y_native
-                    sr = sr_native
-            except Exception as e:
-                print(f"Native rate load failed, using direct resample: {e}")
-                # Fallback: direct resample during load
-                y, sr = librosa.load(
-                    temp_path, 
-                    sr=TARGET_SR,
-                    duration=5.0,
-                    mono=True,
-                    res_type='kaiser_fast'
-                )
+        try:
+            # Use soundfile for fast loading (works for WAV, FLAC, and our converted WAV)
+            data, sr = sf.read(temp_path, dtype='float32')
+            
+            # Convert to mono if stereo
+            if len(data.shape) > 1:
+                data = np.mean(data, axis=1)
+            
+            # Resample to target sample rate if needed
+            if sr != TARGET_SR:
+                import scipy.signal
+                num_samples = int(len(data) * TARGET_SR / sr)
+                data = scipy.signal.resample(data, num_samples)
+                sr = TARGET_SR
+            
+            y = data
+            
+            # Limit to 5 seconds (safety check)
+            max_samples = int(TARGET_SR * MAX_DURATION)
+            if len(y) > max_samples:
+                y = y[:max_samples]
+                print(f"Truncated to {MAX_DURATION} seconds")
+            
+        except Exception as e:
+            print(f"soundfile failed: {e}, falling back to librosa")
+            # Fallback to librosa for other formats
+            y, sr = librosa.load(temp_path, sr=TARGET_SR, duration=MAX_DURATION, mono=True, res_type='kaiser_fast')
         
         load_time = time.time() - start_time
         print(f"Audio load completed in {load_time:.2f} seconds")
-        
-        # Safety check: if loading took too long, we're in trouble
-        if load_time > 25:
-            raise Exception(f"Audio loading took too long ({load_time:.2f}s). Please try a WAV file or shorter audio.")
         
         N = len(y)
         print(f"Audio loaded: {N} samples at {sr} Hz ({N/sr:.2f} seconds)")
@@ -226,10 +257,22 @@ def analyze_audio():
         return jsonify({'error': f'Error processing audio: {error_msg}'}), 500
     
     finally:
-        # Clean up temp file
+        # Clean up temp files (both original and converted WAV if MP3)
         if temp_path and os.path.exists(temp_path):
             try:
                 os.unlink(temp_path)
+            except:
+                pass
+        # Clean up original MP3 file if we converted it
+        if original_temp_path and original_temp_path != temp_path and os.path.exists(original_temp_path):
+            try:
+                os.unlink(original_temp_path)
+            except:
+                pass
+        # Clean up converted WAV file if it exists separately
+        if wav_path and wav_path != temp_path and os.path.exists(wav_path):
+            try:
+                os.unlink(wav_path)
             except:
                 pass
 
