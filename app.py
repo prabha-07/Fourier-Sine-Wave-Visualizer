@@ -58,14 +58,26 @@ def analyze_audio():
             file.save(tmp.name)
             temp_path = tmp.name
         
-        # Load audio using librosa (your existing Python code!)
+        # Load audio using librosa with optimized settings
         print(f"Loading audio: {temp_path}")
-        y, sr = librosa.load(temp_path, sr=None)
+        
+        # Calculate target sample rate to limit data size
+        # For FFT analysis, 22050 Hz is sufficient (covers up to 11kHz)
+        TARGET_SR = 22050
+        
+        # Load audio with target sample rate and limit duration for very long files
+        # This reduces memory usage and processing time
+        y, sr = librosa.load(
+            temp_path, 
+            sr=TARGET_SR,  # Resample during load (faster than loading full quality)
+            duration=60.0,  # Limit to first 60 seconds for very long files
+            mono=True  # Ensure mono for consistent processing
+        )
         
         N = len(y)
         print(f"Audio loaded: {N} samples at {sr} Hz ({N/sr:.2f} seconds)")
         
-        # Limit samples for performance
+        # Further limit samples if still too large (safety check)
         if N > FFT_SAMPLE_LIMIT:
             print(f"Downsampling from {N} to {FFT_SAMPLE_LIMIT} samples")
             step = N // FFT_SAMPLE_LIMIT

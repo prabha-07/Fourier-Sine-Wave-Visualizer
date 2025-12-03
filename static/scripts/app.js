@@ -272,14 +272,40 @@ const computeFFT = async (file) => {
     const formData = new FormData();
     formData.append('file', file);
     
-    const response = await fetch('/api/analyze', {
-      method: 'POST',
-      body: formData
-    });
+    // Create AbortController for timeout handling
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 110000); // 110 seconds (just under 120s gunicorn timeout)
+    
+    let response;
+    try {
+      response = await fetch('/api/analyze', {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      if (fetchError.name === 'AbortError') {
+        throw new Error('Request timed out. The audio file may be too large or complex. Try a shorter or smaller file.');
+      }
+      throw fetchError;
+    }
     
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Server error');
+      let errorMessage = 'Server error';
+      try {
+        const error = await response.json();
+        errorMessage = error.error || errorMessage;
+      } catch (e) {
+        // If response is not JSON, try to get text
+        try {
+          errorMessage = await response.text();
+        } catch (e2) {
+          errorMessage = `Server returned status ${response.status}`;
+        }
+      }
+      throw new Error(errorMessage);
     }
     
     const data = await response.json();
@@ -476,8 +502,16 @@ const handleFile = async (file) => {
     const arrayBuffer = await file.arrayBuffer();
     
     setStatus("Loading audio...");
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
-    STATE.audioBuffer = audioBuffer;
+    try {
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+      STATE.audioBuffer = audioBuffer;
+    } catch (decodeError) {
+      // Handle audio decoding errors
+      if (decodeError.message && decodeError.message.includes('pattern')) {
+        throw new Error('Invalid audio file format. Please try a different audio file (MP3, WAV, OGG, etc.)');
+      }
+      throw new Error(`Failed to decode audio: ${decodeError.message || 'Unknown error'}`);
+    }
     
     resetPlaybackState();
     toggleButtons(true);
