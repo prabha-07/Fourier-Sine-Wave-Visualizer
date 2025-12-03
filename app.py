@@ -5,6 +5,8 @@ import numpy as np
 from scipy.fft import fft, fftfreq
 import tempfile
 import os
+import signal
+import time
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -49,6 +51,10 @@ def analyze_audio():
     if file_size > MAX_FILE_SIZE:
         return jsonify({'error': f'File too large. Max size: {MAX_FILE_SIZE / 1024 / 1024}MB'}), 400
     
+    # Reject very large files early (MP3 decoding is slow for large files)
+    if file_size > 5 * 1024 * 1024:  # 5MB
+        return jsonify({'error': 'File too large for processing. Please use a file under 5MB for faster processing.'}), 400
+    
     # Save temporarily
     temp_path = None
     try:
@@ -65,22 +71,32 @@ def analyze_audio():
         # This is sufficient for FFT visualization and dramatically faster
         TARGET_SR = 8000
         
-        # Limit to first 15 seconds for very long files - critical for timeout prevention
-        # Use fastest resampling method
+        # Limit to first 5 seconds for very long files - critical for timeout prevention
+        # This ensures processing completes well under 30 seconds
         print("Starting librosa.load()...")
+        start_time = time.time()
+        
+        # Load with maximum speed optimizations
         y, sr = librosa.load(
             temp_path, 
             sr=TARGET_SR,  # Very low sample rate = much faster processing
-            duration=15.0,  # Limit to first 15 seconds (critical for timeout)
+            duration=5.0,  # Limit to first 5 seconds (aggressive limit for timeout)
             mono=True,  # Ensure mono
             res_type='kaiser_fast'  # Fastest resampling method
         )
+        
+        load_time = time.time() - start_time
+        print(f"librosa.load() completed in {load_time:.2f} seconds")
+        
+        # Safety check: if loading took too long, we're in trouble
+        if load_time > 20:
+            raise Exception(f"Audio loading took too long ({load_time:.2f}s). File may be too complex.")
         
         N = len(y)
         print(f"Audio loaded: {N} samples at {sr} Hz ({N/sr:.2f} seconds)")
         
         # Aggressively limit samples for FFT to ensure fast computation
-        FFT_LIMIT = 65536  # Even smaller limit (2^16) for fastest FFT
+        FFT_LIMIT = 32768  # Even smaller limit (2^15) for fastest FFT
         if N > FFT_LIMIT:
             print(f"Downsampling from {N} to {FFT_LIMIT} samples")
             step = N // FFT_LIMIT
@@ -89,9 +105,13 @@ def analyze_audio():
             print(f"After downsampling: {N} samples")
         
         print("Starting FFT computation...")
+        fft_start = time.time()
         
         # Compute Fourier Transform (your existing code!)
         Y = fft(y)
+        fft_time = time.time() - fft_start
+        print(f"FFT computation completed in {fft_time:.2f} seconds")
+        
         freqs = fftfreq(N, 1/sr)
         
         # Only take positive frequencies (exclude DC)
