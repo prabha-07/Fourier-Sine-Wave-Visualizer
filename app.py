@@ -193,11 +193,8 @@ def analyze_audio():
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
         
-        # Validate filename security
-        filename = secure_filename(file.filename)
-        if not filename or filename != file.filename:
-            logger.warning(f"Invalid filename detected: {file.filename}")
-            return jsonify({'error': 'Invalid filename. Please use a valid audio file name.'}), 400
+        # Use original filename for processing, secure_filename only for storage/display
+        filename = file.filename
         
         if not allowed_file(filename):
             return jsonify({'error': 'Invalid file type. Use MP3, WAV, OGG, etc.'}), 400
