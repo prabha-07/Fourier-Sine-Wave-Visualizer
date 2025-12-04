@@ -23,10 +23,11 @@ FFT_SAMPLE_LIMIT = 262144
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def decode_mp3_ffmpeg(mp3_path, wav_path, target_sr=22050, max_duration=30.0):
+def decode_mp3_ffmpeg(mp3_path, wav_path, target_sr=22050, max_duration=None):
     """
     Decode MP3 to WAV using ffmpeg directly (much more memory-efficient than librosa).
     This avoids heavy in-RAM MP3 decode and is faster.
+    If max_duration is None, processes the entire file.
     """
     print(f"Decoding MP3 to WAV using ffmpeg: {mp3_path} -> {wav_path}")
     start_time = time.time()
@@ -44,10 +45,14 @@ def decode_mp3_ffmpeg(mp3_path, wav_path, target_sr=22050, max_duration=30.0):
             "-i", mp3_path,  # input file
             "-ac", "1",      # mono (1 audio channel)
             "-ar", str(target_sr),  # sample rate
-            "-t", str(max_duration),  # max duration in seconds
             "-f", "wav",     # output format
             wav_path         # output file
         ]
+        
+        # Only add duration limit if specified
+        if max_duration is not None:
+            cmd.insert(-2, "-t")  # Insert before output format
+            cmd.insert(-2, str(max_duration))  # Insert duration value
         
         print(f"Running ffmpeg command: {' '.join(cmd)}")
         result = subprocess.run(
@@ -137,7 +142,7 @@ def analyze_audio():
         # Use higher sample rate for better frequency resolution (22050 Hz covers up to 11kHz)
         # This allows us to see frequencies up to 4000+ Hz range properly
         TARGET_SR = 22050
-        MAX_DURATION = 30.0  # Process up to 30 seconds for better frequency analysis
+        MAX_DURATION = None  # Process entire audio file for full frequency analysis
         
         original_temp_path = temp_path
         
@@ -146,9 +151,9 @@ def analyze_audio():
             print("MP3 file detected - decoding to WAV using ffmpeg...")
             wav_path = temp_path.replace('.mp3', '.wav').replace('.MP3', '.wav')
             
-            # Decode MP3 to WAV using ffmpeg (memory-efficient)
+            # Decode MP3 to WAV using ffmpeg (memory-efficient, processes entire file)
             conversion_start = time.time()
-            success, num_samples, sr = decode_mp3_ffmpeg(temp_path, wav_path, TARGET_SR, MAX_DURATION)
+            success, num_samples, sr = decode_mp3_ffmpeg(temp_path, wav_path, TARGET_SR, None)
             conversion_time = time.time() - conversion_start
             
             if not success:
@@ -182,16 +187,12 @@ def analyze_audio():
             
             y = data
             
-            # Limit duration (safety check)
-            max_samples = int(TARGET_SR * MAX_DURATION)
-            if len(y) > max_samples:
-                y = y[:max_samples]
-                print(f"Truncated to {MAX_DURATION} seconds")
+            # Process entire file - no duration limit
             
         except Exception as e:
             print(f"soundfile failed: {e}, falling back to librosa")
-            # Fallback to librosa for other formats
-            y, sr = librosa.load(temp_path, sr=TARGET_SR, duration=MAX_DURATION, mono=True, res_type='kaiser_fast')
+            # Fallback to librosa for other formats (loads entire file)
+            y, sr = librosa.load(temp_path, sr=TARGET_SR, mono=True, res_type='kaiser_fast')
         
         load_time = time.time() - start_time
         print(f"Audio load completed in {load_time:.2f} seconds")
