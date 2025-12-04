@@ -42,7 +42,6 @@
       <div class="panel__header">
         <h2>1. Upload audio</h2>
         <p>Select any MP3/WAV file under 10&nbsp;MB to analyze.</p>
-        <p style="font-size: 0.9rem; color: rgba(148, 163, 184, 0.8); margin-top: 0.5rem;"><strong>Tip:</strong> WAV files process much faster than MP3. For best performance, convert MP3 to WAV first.</p>
       </div>
       <div class="dropzone" id="dropzone-container">
         <input id="file-input" type="file" accept="audio/*" style="position: absolute; opacity: 0; width: 100%; height: 100%; top: 0; left: 0; cursor: pointer; z-index: 10;" />
@@ -95,9 +94,6 @@
       <canvas id="visualizer" width="1200" height="600" role="img" aria-label="Sine wave visualization of uploaded audio frequencies">
         Your browser does not support canvas.
       </canvas>
-      <div class="panel__footer">
-        <p><strong>Tip:</strong> Larger magnitudes = brighter, taller waves. Frequencies are sorted from bass (top) to treble (bottom).</p>
-      </div>
     </section>
 
     <section class="panel panel--frequencies">
