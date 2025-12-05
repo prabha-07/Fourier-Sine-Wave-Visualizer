@@ -471,6 +471,10 @@ const handleReset = () => {
   clearFrequencyTable();
   updateStats();
   toggleButtons(false);
+  // Clear the file input so new files can be selected
+  if (elements.fileInput) {
+    elements.fileInput.value = '';
+  }
   setStatus("Visualizer reset. Upload a new file to begin.");
   drawPlaceholder();
 };
